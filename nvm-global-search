@@ -8,8 +8,7 @@
 #   ./nvm-global-search <包名>      # 搜索特定的全局包 (如: ./nvm-global-search yarn)
 # ==============================================================================
 
-# 严格模式：遇到未定义变量或管道错误时继续执行但需小心处理，这里我们不使用 set -e，
-# 因为文件系统中某些空目录操作可能会触发静默非零返回，导致脚本意外终止。
+# 严格模式：遇到未定义变量或管道错误时继续执行但需小心处理
 set -uo pipefail
 
 # 定义颜色输出，提升终端阅读体验
@@ -35,6 +34,20 @@ fi
 
 readonly NVM_VERSIONS_DIR="$NVM_DIR/versions/node"
 
+# 预先收集所有别名，以提高搜索效率
+# 格式为 "target:alias_name"，每行一个
+ALL_ALIASES=""
+if [ -d "$NVM_DIR/alias" ]; then
+  ALL_ALIASES=$(find "$NVM_DIR/alias" -type f -exec bash -c '
+    for file; do
+      target=$(cat "$file" 2>/dev/null)
+      if [ -n "$target" ]; then
+        echo "$target:${file#$1/}"
+      fi
+    done
+  ' _ "$NVM_DIR/alias" {} +)
+fi
+
 if [ -n "$SEARCH_TERM" ]; then
   echo -e "${COLOR_BLUE}🔍 正在所有环境（nvm/系统）中搜索全局包: ${COLOR_YELLOW}\"$SEARCH_TERM\"${COLOR_RESET}\n"
 else
@@ -44,12 +57,59 @@ fi
 # 记录是否找到了至少一个匹配的包
 FOUND_ANY=0
 
+# 定义获取版本对应所有别名的函数（支持多层解析，例如 lts/* -> lts/hydrogen -> v18.x）
+get_aliases() {
+  local target="$1"
+  [ -z "$ALL_ALIASES" ] && return
+  
+  local found=""
+  local queue=("$target")
+  local visited=("$target")
+  
+  # 简单的 BFS 查找所有指向该目标的别名
+  local head=0
+  while [ $head -lt ${#queue[@]} ] && [ $head -lt 10 ]; do # 限制 10 次防止死循环
+    local curr="${queue[$head]}"
+    head=$((head + 1))
+    
+    # 查找所有以 curr 为目标的别名
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      local alias_name="${line#*:}"
+      
+      # 检查是否已访问
+      local already_visited=0
+      for v in "${visited[@]}"; do
+        if [ "$v" == "$alias_name" ]; then already_visited=1; break; fi
+      done
+      
+      if [ $already_visited -eq 0 ]; then
+        visited+=("$alias_name")
+        queue+=("$alias_name")
+        found="${found}${found:+, }$alias_name"
+      fi
+    done < <(echo "$ALL_ALIASES" | grep "^$curr:")
+  done
+  
+  echo "$found"
+}
+
 # 定义搜索并打印的函数
 search_and_print() {
   local display_name="$1"
   local modules_dir="$2"
+  local version_val="${3:-}"
 
   [ -d "$modules_dir" ] || return
+
+  # 如果提供了版本号，则尝试获取别名并附加到显示名称上
+  if [ -n "$version_val" ]; then
+    local aliases
+    aliases=$(get_aliases "$version_val")
+    if [ -n "$aliases" ]; then
+      display_name="$display_name ($aliases)"
+    fi
+  fi
 
   local packages=()
 
@@ -71,12 +131,17 @@ search_and_print() {
   # 如果提供了搜索词，进行过滤
   if [ -n "$SEARCH_TERM" ]; then
     local filtered_packages=()
-    for pkg in "${packages[@]:-}"; do
-      if [[ "$pkg" == *"$SEARCH_TERM"* ]]; then
-        filtered_packages+=("$pkg")
-      fi
-    done
-    packages=("${filtered_packages[@]:-}")
+    if [ ${#packages[@]} -gt 0 ]; then
+      for pkg in "${packages[@]}"; do
+        if [[ "$pkg" == *"$SEARCH_TERM"* ]]; then
+          filtered_packages+=("$pkg")
+        fi
+      done
+    fi
+    packages=()
+    if [ ${#filtered_packages[@]} -gt 0 ]; then
+      packages=("${filtered_packages[@]}")
+    fi
   fi
 
   # 如果该版本下有符合条件的包，则打印输出
@@ -99,7 +164,8 @@ search_and_print() {
 if [ -d "$NVM_VERSIONS_DIR" ]; then
   for version_path in "$NVM_VERSIONS_DIR"/*; do
     [ -d "$version_path" ] || continue 
-    search_and_print "Node $(basename "$version_path")" "$version_path/lib/node_modules"
+    version=$(basename "$version_path")
+    search_and_print "Node $version" "$version_path/lib/node_modules" "$version"
   done
 fi
 
@@ -112,7 +178,7 @@ if [ -n "$SYSTEM_NPM" ]; then
   if [ -d "$SYSTEM_MODULES_DIR" ]; then
     # 避免重复搜索（如果系统 path 指向的正是一个 NVM 路径）
     if [[ "$SYSTEM_MODULES_DIR" != *"$NVM_DIR"* ]]; then
-      search_and_print "Node system" "$SYSTEM_MODULES_DIR"
+      search_and_print "Node system" "$SYSTEM_MODULES_DIR" "system"
     fi
   fi
 fi
