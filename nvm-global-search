@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+# 脚本名称: nvm-global-search.sh
+# 描述: 极速遍历并搜索所有 nvm 环境（及系统环境）下的全局 npm 包。
+# 用法: 
+#   ./nvm-global-search             # 列出所有版本的全局包
+#   ./nvm-global-search <包名>      # 搜索特定的全局包 (如: ./nvm-global-search yarn)
+# ==============================================================================
+
+# 严格模式：遇到未定义变量或管道错误时继续执行但需小心处理，这里我们不使用 set -e，
+# 因为文件系统中某些空目录操作可能会触发静默非零返回，导致脚本意外终止。
+set -uo pipefail
+
+# 定义颜色输出，提升终端阅读体验
+readonly COLOR_RESET="\033[0m"
+readonly COLOR_GREEN="\033[1;32m"
+readonly COLOR_BLUE="\033[1;34m"
+readonly COLOR_YELLOW="\033[1;33m"
+readonly COLOR_DIM="\033[2m"
+
+# 获取要搜索的关键字（可选）
+readonly SEARCH_TERM="${1:-}"
+
+# 确定 NVM_DIR 路径
+if [ -z "${NVM_DIR:-}" ]; then
+  # 如果没有环境变量，尝试猜测默认路径
+  if [ -d "$HOME/.nvm" ]; then
+    NVM_DIR="$HOME/.nvm"
+  else
+    echo -e "${COLOR_YELLOW}警告: 未找到 NVM_DIR 环境变量，且 ~/.nvm 目录不存在。请确认你已安装 nvm。${COLOR_RESET}" >&2
+    exit 1
+  fi
+fi
+
+readonly NVM_VERSIONS_DIR="$NVM_DIR/versions/node"
+
+if [ -n "$SEARCH_TERM" ]; then
+  echo -e "${COLOR_BLUE}🔍 正在所有环境（nvm/系统）中搜索全局包: ${COLOR_YELLOW}\"$SEARCH_TERM\"${COLOR_RESET}\n"
+else
+  echo -e "${COLOR_BLUE}📦 正在列出所有环境（nvm/系统）下的全局 npm 包...${COLOR_RESET}\n"
+fi
+
+# 记录是否找到了至少一个匹配的包
+FOUND_ANY=0
+
+# 定义搜索并打印的函数
+search_and_print() {
+  local display_name="$1"
+  local modules_dir="$2"
+
+  [ -d "$modules_dir" ] || return
+
+  local packages=()
+
+  # 1. 查找普通包 (忽略 @ 开头的目录和隐藏文件)
+  while IFS= read -r pkg; do
+    [ -n "$pkg" ] && packages+=("$pkg")
+  done < <(find "$modules_dir" -mindepth 1 -maxdepth 1 -type d ! -name "@*" ! -name ".*" -exec basename {} \; 2>/dev/null)
+
+  # 2. 查找作用域包 (例如 @vue/cli)
+  for scope_dir in "$modules_dir"/@*; do
+    if [ -d "$scope_dir" ]; then
+      local scope_name=$(basename "$scope_dir")
+      while IFS= read -r sub_pkg; do
+        [ -n "$sub_pkg" ] && packages+=("$scope_name/$sub_pkg")
+      done < <(find "$scope_dir" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null)
+    fi
+  done
+
+  # 如果提供了搜索词，进行过滤
+  if [ -n "$SEARCH_TERM" ]; then
+    local filtered_packages=()
+    for pkg in "${packages[@]:-}"; do
+      if [[ "$pkg" == *"$SEARCH_TERM"* ]]; then
+        filtered_packages+=("$pkg")
+      fi
+    done
+    packages=("${filtered_packages[@]:-}")
+  fi
+
+  # 如果该版本下有符合条件的包，则打印输出
+  if [ ${#packages[@]} -gt 0 ]; then
+    FOUND_ANY=1
+    echo -e "🟢 ${COLOR_GREEN}$display_name${COLOR_RESET}"
+    for pkg in "${packages[@]}"; do
+      # 如果包名是 npm 自身，用暗色显示，因为它是默认自带的
+      if [ "$pkg" == "npm" ] || [ "$pkg" == "corepack" ]; then
+        echo -e "   ├─ ${COLOR_DIM}$pkg (默认自带)${COLOR_RESET}"
+      else
+        echo -e "   ├─ $pkg"
+      fi
+    done
+    echo "" # 打印空行以区分不同版本
+  fi
+}
+
+# 1. 遍历 NVM 管理的所有 Node 版本
+if [ -d "$NVM_VERSIONS_DIR" ]; then
+  for version_path in "$NVM_VERSIONS_DIR"/*; do
+    [ -d "$version_path" ] || continue 
+    search_and_print "Node $(basename "$version_path")" "$version_path/lib/node_modules"
+  done
+fi
+
+# 2. 尝试检测并搜索系统 (system) 环境
+# 移除 PATH 中所有 NVM 相关路径来定位系统级 npm
+CLEAN_PATH=$(echo "$PATH" | sed -E "s|[^:]*${NVM_DIR}[^:]*[:]?||g; s|:$||")
+SYSTEM_NPM=$(PATH="$CLEAN_PATH" command -v npm 2>/dev/null)
+if [ -n "$SYSTEM_NPM" ]; then
+  SYSTEM_MODULES_DIR=$(PATH="$CLEAN_PATH" "$SYSTEM_NPM" root -g 2>/dev/null)
+  if [ -d "$SYSTEM_MODULES_DIR" ]; then
+    # 避免重复搜索（如果系统 path 指向的正是一个 NVM 路径）
+    if [[ "$SYSTEM_MODULES_DIR" != *"$NVM_DIR"* ]]; then
+      search_and_print "Node system" "$SYSTEM_MODULES_DIR"
+    fi
+  fi
+fi
+
+if [ "$FOUND_ANY" -eq 0 ]; then
+  if [ -n "$SEARCH_TERM" ]; then
+    echo -e "${COLOR_YELLOW}未在任何 Node 版本中找到包含 \"$SEARCH_TERM\" 的全局包。${COLOR_RESET}"
+  else
+    echo -e "${COLOR_YELLOW}未找到任何全局包（除了系统可能默认的包外）。${COLOR_RESET}"
+  fi
+fi
