@@ -16,7 +16,8 @@
 ```text
 /
 ├── .gitignore            # Git 忽略文件配置
-├── GEMINI.md             # Gemini CLI 配置/引导文件
+├── AGENTS.md             # Gemini CLI 配置/引导文件
+├── CLAUDE.md             # Claude CLI 配置/引导文件（软链接到 AGENTS.md）
 ├── README.md             # 项目说明文档
 ├── nvm-global-search     # nvm 全局包搜索脚本
 └── sync-file             # 跨平台文件同步脚本
