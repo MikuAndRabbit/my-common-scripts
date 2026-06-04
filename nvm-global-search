@@ -149,11 +149,31 @@ search_and_print() {
     FOUND_ANY=1
     echo -e "🟢 ${COLOR_GREEN}$display_name${COLOR_RESET}"
     for pkg in "${packages[@]}"; do
+      # 获取包版本号
+      local pkg_version=""
+      if [[ "$pkg" == *"/"* ]]; then
+        # 作用域包
+        local pkg_path="$modules_dir/$pkg"
+        if [ -f "$pkg_path/package.json" ]; then
+          pkg_version=$(grep -E '"version":' "$pkg_path/package.json" | head -1 | sed -E 's/.*"version":[[:space:]]*"([^"]+)".*/\1/')
+        fi
+      else
+        # 普通包
+        local pkg_path="$modules_dir/$pkg"
+        if [ -f "$pkg_path/package.json" ]; then
+          pkg_version=$(grep -E '"version":' "$pkg_path/package.json" | head -1 | sed -E 's/.*"version":[[:space:]]*"([^"]+)".*/\1/')
+        fi
+      fi
+
+      # 构建显示文本
+      local display_pkg="$pkg"
+      [ -n "$pkg_version" ] && display_pkg="$pkg@$pkg_version"
+
       # 如果包名是 npm 自身，用暗色显示，因为它是默认自带的
       if [ "$pkg" == "npm" ] || [ "$pkg" == "corepack" ]; then
-        echo -e "   ├─ ${COLOR_DIM}$pkg (默认自带)${COLOR_RESET}"
+        echo -e "   ├─ ${COLOR_DIM}$display_pkg (默认自带)${COLOR_RESET}"
       else
-        echo -e "   ├─ $pkg"
+        echo -e "   ├─ $display_pkg"
       fi
     done
     echo "" # 打印空行以区分不同版本

@@ -1,0 +1,50 @@
+#!/bin/bash
+# 动态解析法：通过子 Shell 隔离执行并 Diff 环境变量
+
+set -e
+
+if [[ $# -ne 2 ]]; then
+    echo "用法: $0 <输入脚本.sh> <输出结果.json>" >&2
+    exit 1
+fi
+
+INPUT_FILE="$1"
+OUTPUT_JSON="$2"
+
+if [[ ! -f "$INPUT_FILE" ]]; then
+    echo "错误: 找不到输入文件 '$INPUT_FILE'" >&2
+    exit 1
+fi
+
+if ! command -v jq &> /dev/null; then
+    echo "错误: 缺少依赖 'jq'，请先安装 (例如: apt-get install jq 或 brew install jq)" >&2
+    exit 1
+fi
+
+# 1. 捕获系统当前的初始环境变量快照
+OLD_ENV=$(jq -n env)
+
+# 2. 在隔离的子 Shell 中 source 目标脚本，并捕获新的环境变量快照
+# 注意：这会真实执行目标脚本。所有的 export 都会在此生效，并将结果转储。
+NEW_ENV=$(bash -c "
+    source '$INPUT_FILE' >/dev/null 2>&1
+    jq -n env
+")
+
+# 3. 使用 jq 对比前后的差异，精确提取脚本新增或修改的变量
+# 过滤掉 SHLVL, _, PWD 这些因为执行子 Shell 而自动改变的内置系统变量
+jq -n \
+   --argjson old "$OLD_ENV" \
+   --argjson new "$NEW_ENV" \
+   '
+   $new | with_entries(
+       select(
+           .key != "SHLVL" and
+           .key != "_" and
+           .key != "PWD" and
+           ($old[.key] != .value)
+       )
+   )
+   ' > "$OUTPUT_JSON"
+
+echo "✅ 动态提取完成！变量已写入 $OUTPUT_JSON"
