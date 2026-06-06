@@ -23,3 +23,12 @@ yarn-error.log*
 # Temporary files
 *.tmp
 .gemini/
+
+# Python (uv-managed subprojects under python/)
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv/

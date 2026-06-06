@@ -1,0 +1,9 @@
+[project]
+name = "algorithm-records"
+version = "0.1.0"
+description = "Parse the `Algorithm Records.xlsx` 刷题记录 workbook into queryable Python data structures and provide a CLI."
+readme = "USAGE.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openpyxl>=3.1.5",
+]
