@@ -1,0 +1,6 @@
+[project]
+name = "find-markdown-images"
+version = "0.1.0"
+description = "检测 Markdown 文件中的所有图片引用，按类型（本地/远程/内嵌）分类输出"
+requires-python = ">=3.10"
+dependencies = []

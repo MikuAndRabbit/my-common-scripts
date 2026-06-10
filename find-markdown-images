@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+# 脚本名称: find-markdown-images
+# 描述: 检测 Markdown 文件中的所有图片引用，按类型（本地/远程/内嵌）分类输出。
+#       核心 Python 模块位于 `python/find-markdown-images/`, 由 `uv` 托管依赖。
+# 用法:
+#   ./find-markdown-images README.md
+#   ./find-markdown-images README.md --json
+# ==============================================================================
+
+set -euo pipefail
+
+# 依赖 uv (https://docs.astral.sh/uv/). 本机如未安装请先 `brew install uv`.
+if ! command -v uv >/dev/null 2>&1; then
+    echo "错误: 未在 PATH 中找到 'uv', 请先安装 (例如: brew install uv)" >&2
+    exit 1
+fi
+
+# 定位本脚本所在目录, 兼容符号链接与 `source` 调用.
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+PROJECT_DIR="$SCRIPT_DIR/python/find-markdown-images"
+
+if [[ ! -f "$PROJECT_DIR/pyproject.toml" ]]; then
+    echo "错误: 未在 $PROJECT_DIR 找到 pyproject.toml, 目录结构可能已损坏." >&2
+    exit 1
+fi
+
+# --project 指定依赖来源 (该 Python 子项目);
+# --directory 保留调用者当前的工作目录, 使用户传入的相对文件路径仍能解析.
+exec uv run \
+    --project "$PROJECT_DIR" \
+    --directory "$PWD" \
+    python "$PROJECT_DIR/find_markdown_images.py" "$@"
