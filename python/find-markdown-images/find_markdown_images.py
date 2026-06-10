@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from dataclasses import asdict, dataclass
@@ -106,15 +107,16 @@ _RE_HTML_IMG = re.compile(
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass
 class ImageRef:
     """文件中找到的一处图片引用."""
 
-    url: str                # 原始 URL / 路径
+    url: str                # URL / 路径（可能经路径格式转换）
     alt: str | None         # alt 文本 (HTML <img> 无 alt 时为 None)
     image_type: str         # "inline" | "reference" | "html"
     url_type: str           # "local" | "remote" | "embedded"
     line_number: int        # 出现的行号 (1-based)
+    original_url: str       # Markdown 文件中的原始 URL / 路径
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -126,6 +128,8 @@ class ParseResult:
 
     file_path: Path
     images: list[ImageRef]
+    path_format: str = "original"
+    path_relative_to: str = "cwd"
 
     @property
     def has_local(self) -> bool:
@@ -155,7 +159,7 @@ class ParseResult:
         return sum(1 for img in self.images if img.url_type == "embedded")
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "file_path": str(self.file_path),
             "has_local": self.has_local,
             "has_remote": self.has_remote,
@@ -165,6 +169,10 @@ class ParseResult:
             "embedded_count": self.embedded_count,
             "images": [img.to_dict() for img in self.images],
         }
+        if self.path_format != "original":
+            result["path_format"] = self.path_format
+            result["path_relative_to"] = self.path_relative_to
+        return result
 
     def to_json(self, *, indent: int | None = 2) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent)
@@ -192,6 +200,58 @@ def _classify_url(url: str) -> str:
         return "local"
     # 其余均为相对本地路径
     return "local"
+
+
+def _is_windows_absolute(url: str) -> bool:
+    """判断是否为 Windows 绝对路径 (驱动器号或 UNC)."""
+    return bool(re.match(r"^[A-Za-z]:[\\/]", url)) or url.startswith("\\\\")
+
+
+def _resolve_local_url(
+    url: str,
+    file_path: Path,
+    path_format: str,
+    relative_to: str,
+) -> str:
+    """根据 ``path_format`` 转换本地路径.
+
+    Parameters
+    ----------
+    url :
+        原始 URL / 路径字符串.
+    file_path :
+        Markdown 文件路径 (用于解析相对路径的基准).
+    path_format :
+        ``"original"`` | ``"absolute"`` | ``"relative"``.
+    relative_to :
+        当 ``path_format="relative"`` 时的基准目录:
+        ``"cwd"`` → 当前工作目录,
+        ``"file-dir"`` → Markdown 文件所在目录,
+        其他值 → 用户指定的目录路径.
+    """
+    if path_format == "original":
+        return url
+
+    # Windows 绝对路径 / UNC 路径跨平台场景不做转换
+    if _is_windows_absolute(url):
+        return url
+
+    # 以 Markdown 文件所在目录为基准解析绝对路径
+    base_dir = file_path.parent
+    resolved = (base_dir / url).resolve()
+
+    if path_format == "absolute":
+        return str(resolved)
+
+    # path_format == "relative"
+    if relative_to == "cwd":
+        rel_base = Path.cwd()
+    elif relative_to == "file-dir":
+        rel_base = base_dir.resolve()
+    else:
+        rel_base = Path(relative_to).resolve()
+
+    return os.path.relpath(str(resolved), str(rel_base))
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +317,7 @@ def _find_inline_images(
             image_type="inline",
             url_type=_classify_url(url),
             line_number=line_number,
+            original_url=url,
         ))
 
 
@@ -298,6 +359,7 @@ def _find_reference_images(
             image_type="reference",
             url_type=_classify_url(url),
             line_number=line_number,
+            original_url=url,
         ))
 
 
@@ -329,6 +391,7 @@ def _find_html_images(
             image_type="html",
             url_type=_classify_url(url),
             line_number=line_number,
+            original_url=url,
         ))
 
 
@@ -462,6 +525,24 @@ def main(argv: list[str] | None = None) -> None:
         dest="json_output",
         help="以 JSON 格式输出 (适合脚本调用)",
     )
+    parser.add_argument(
+        "--path-format",
+        choices=["original", "absolute", "relative"],
+        default="original",
+        dest="path_format",
+        help="本地路径的输出格式 (默认: original，即 Markdown 文件中的原始写法)",
+    )
+    parser.add_argument(
+        "--path-relative-to",
+        default="cwd",
+        dest="path_relative_to",
+        help=(
+            "当 --path-format=relative 时的基准目录: "
+            "cwd (当前工作目录, 默认), "
+            "file-dir (Markdown 文件所在目录), "
+            "或自定义目录路径"
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -473,6 +554,17 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as exc:
         print(f"错误: {exc}", file=sys.stderr)
         sys.exit(1)
+
+    # 对本地路径应用路径格式转换
+    path_format = args.path_format
+    path_relative_to = args.path_relative_to
+    for img in result.images:
+        if img.url_type == "local":
+            img.url = _resolve_local_url(
+                img.original_url, result.file_path, path_format, path_relative_to,
+            )
+    result.path_format = path_format
+    result.path_relative_to = path_relative_to
 
     if args.json_output:
         print(result.to_json())
