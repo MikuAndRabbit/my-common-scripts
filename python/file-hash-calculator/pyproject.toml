@@ -1,0 +1,18 @@
+[project]
+name = "file-hash-calculator"
+version = "1.0.0"
+description = "CLI tool for computing BLAKE3 hashes of files and directories"
+requires-python = ">=3.10"
+dependencies = [
+    "blake3>=1.0.0",
+    "tqdm>=4.66.0",
+    "pyyaml>=6.0",
+    "pathspec>=0.12.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["file_hash_calculator"]

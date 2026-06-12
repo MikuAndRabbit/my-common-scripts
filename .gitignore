@@ -32,3 +32,6 @@ dist/
 wheels/
 *.egg-info
 .venv/
+
+# Checkpoint files (file-hash-calculator)
+*.checkpoint.jsonl

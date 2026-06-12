@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Wrapper script for file-hash-calculator
+# Uses uv to manage Python dependencies and run the tool
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON_DIR="${SCRIPT_DIR}/python/file-hash-calculator"
+
+exec uv run --project "${PYTHON_DIR}" python "${PYTHON_DIR}/file_hash_calculator.py" "$@"
